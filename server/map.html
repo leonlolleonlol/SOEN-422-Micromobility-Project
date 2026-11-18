@@ -1,0 +1,72 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Pothole Map</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<style>
+  html, body { margin: 0; height: 100%; font-family: sans-serif; }
+  #map { height: 100%; }
+  #status {
+    position: absolute; top: 10px; right: 10px; z-index: 1000;
+    background: white; padding: 6px 10px; border-radius: 6px;
+    box-shadow: 0 1px 4px rgba(0,0,0,.3); font-size: 14px;
+  }
+</style>
+</head>
+<body>
+<div id="map"></div>
+<div id="status">Loading...</div>
+<script>
+const map = L.map("map").setView([45.5017, -73.5673], 13);
+L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
+  maxZoom: 19, attribution: "&copy; OpenStreetMap contributors"
+}).addTo(map);
+
+const layer = L.layerGroup().addTo(map);
+let lastData = "";
+let firstLoad = true;
+
+async function refresh() {
+  const status = document.getElementById("status");
+  try {
+    const res = await fetch("/hazards");
+    const text = await res.text();
+    const hazards = JSON.parse(text);
+
+    // only redraw when something changed (keeps popups open)
+    if (text !== lastData) {
+      lastData = text;
+      layer.clearLayers();
+      hazards.forEach(h => {
+        const color = h.corroborated ? "red" : "orange";
+        L.circleMarker([h.lat, h.lon], {
+          radius: 10, color: color, fillColor: color, fillOpacity: 0.7
+        })
+        .bindPopup(
+          `<b>${h.corroborated ? "Confirmed pothole" : "Possible pothole"}</b><br>` +
+          `LiDAR: ${h.has_lidar ? "yes" : "no"} | Camera: ${h.has_camera ? "yes" : "no"}<br>` +
+          `Rides: ${h.ride_count} | Reports: ${h.report_count}<br>` +
+          `Last seen: ${h.last_seen}`
+        )
+        .addTo(layer);
+      });
+      if (firstLoad && hazards.length) {
+        map.setView([hazards[0].lat, hazards[0].lon], 17);
+        firstLoad = false;
+      }
+    }
+    status.textContent = `${hazards.length} pothole(s) · updated ${new Date().toLocaleTimeString()}`;
+  } catch (e) {
+    status.textContent = "Server not reachable";
+  }
+}
+
+refresh();
+setInterval(refresh, 2000);
+</script>
+</body>
+</html>
+
