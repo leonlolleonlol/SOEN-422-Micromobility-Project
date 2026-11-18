@@ -1,4 +1,4 @@
-from flask import Flask, request, jsonify
+from flask import Flask, request, jsonify, send_file
 import sqlite3
 import math
 
@@ -25,6 +25,7 @@ with db() as conn:
             satellites INTEGER,
             evidence TEXT,
             range_delta_cm REAL,
+            lidar_confidence REAL,
             vision_confidence REAL
         )
     """)
@@ -55,16 +56,21 @@ def build_hazards():
 
     hazards = []
     for i, g in enumerate(groups, start=1):
-        rides = {r["ride_id"] for r in g["reports"]}
+        reports = g["reports"]
+        rides = {r["ride_id"] for r in reports}
+        has_lidar = any(r["evidence"] in ("range", "both") for r in reports)
+        has_camera = any(r["evidence"] in ("vision", "both") for r in reports)
         hazards.append({
             "hazard_id": i,
             "lat": g["lat"],
             "lon": g["lon"],
             "ride_count": len(rides),
-            "report_count": len(g["reports"]),
-            "corroborated": len(rides) >= RIDES_NEEDED,
-            "evidence": sorted({r["evidence"] for r in g["reports"]}),
-            "last_seen": max(r["timestamp"] for r in g["reports"]),
+            "report_count": len(reports),
+            "has_lidar": has_lidar,
+            "has_camera": has_camera,
+            "corroborated": len(rides) >= RIDES_NEEDED and has_lidar and has_camera,
+            "evidence": sorted({r["evidence"] for r in reports}),
+            "last_seen": max(r["timestamp"] for r in reports),
         })
     return hazards
 
@@ -80,11 +86,11 @@ def add_report():
     r = request.get_json()
     with db() as conn:
         cur = conn.execute(
-            "INSERT OR IGNORE INTO reports VALUES (?,?,?,?,?,?,?,?,?,?)",
+            "INSERT OR IGNORE INTO reports VALUES (?,?,?,?,?,?,?,?,?,?,?)",
             (r["event_id"], r.get("ride_id"), r.get("timestamp"),
              r["lat"], r["lon"], r.get("gps_fix"), r.get("satellites"),
              r.get("evidence"), r.get("range_delta_cm"),
-             r.get("vision_confidence")),
+             r.get("lidar_confidence"), r.get("vision_confidence")),
         )
         duplicate = cur.rowcount == 0
     return jsonify({
@@ -108,6 +114,11 @@ def get_hazards():
     if lat is not None and lon is not None:
         return jsonify(nearby_hazards(lat, lon))
     return jsonify(build_hazards())
+
+# the map page
+@app.get("/")
+def map_page():
+    return send_file("map.html")
 
 if __name__ == "__main__":
     app.run(debug=True, port=8000)
